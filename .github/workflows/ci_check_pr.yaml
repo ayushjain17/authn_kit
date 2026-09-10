@@ -1,0 +1,141 @@
+name: CI Checks on PRs
+
+permissions:
+    contents: read
+
+on:
+    pull_request:
+        branches: [main]
+    push:
+        branches: [main]
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+env:
+    # Incremental compilation helps an edit-build-test loop, not CI, which almost
+    # always builds from scratch. See
+    # https://matklad.github.io/2021/09/04/fast-rust-builds.html#ci-workflow
+    CARGO_INCREMENTAL: 0
+    CARGO_NET_RETRY: 10
+    RUSTUP_MAX_RETRIES: 10
+    RUST_BACKTRACE: short
+    CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
+jobs:
+    formatting:
+        name: Formatting, lints and conventional commits
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Restore cache (if present)
+              uses: actions/cache/restore@v4
+              with:
+                  path: |
+                      ~/.cargo/bin/
+                      ~/.cargo/registry/index/
+                      ~/.cargo/registry/cache/
+                      ~/.cargo/git/db/
+                      target/
+                  key: ${{ runner.os }}-cargo-check-${{ hashFiles('**/Cargo.toml') }}
+                  restore-keys: ${{ runner.os }}-cargo-check-
+
+            - name: Install Rust
+              uses: dtolnay/rust-toolchain@master
+              with:
+                  toolchain: 1.90.0
+                  components: rustfmt, clippy
+
+            - name: Check formatting and lints
+              run: make check
+
+            - name: install cocogitto
+              uses: baptiste0928/cargo-install@v2.2.0
+              with:
+                  crate: cocogitto
+                  version: "6.3.0"
+
+            - name: Check conventional commit
+              shell: bash
+              run: |
+                  if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+                    git config --global user.name "${{ github.event.pull_request.user.login }}"
+                    commit=$(git log --format=%B -n 1 ${{ github.event.pull_request.head.sha }})
+                  else
+                    git config --global user.name "${{ github.event.pusher.name }}"
+                    commit=$(git log --format=%B -n 1 ${{ github.sha }})
+                  fi
+                  git config --global user.email "temp_email@juspay.in"
+                  cog verify "$commit"
+
+    test:
+        name: Tests
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Restore cache (if present)
+              uses: actions/cache/restore@v4
+              id: cache-restore
+              with:
+                  path: |
+                      ~/.cargo/bin/
+                      ~/.cargo/registry/index/
+                      ~/.cargo/registry/cache/
+                      ~/.cargo/git/db/
+                      target/
+                  key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.toml') }}
+                  restore-keys: ${{ runner.os }}-cargo-test-
+
+            - name: Install Rust
+              uses: dtolnay/rust-toolchain@master
+              with:
+                  toolchain: 1.90.0
+                  components: rustfmt, clippy
+
+            # Every feature combination must compile on its own, so a `cfg` that
+            # only works alongside some other feature is caught here rather than
+            # by a consumer.
+            - name: Test across the feature matrix
+              run: make test-matrix
+
+            - name: Build the worked example
+              run: make example
+
+            - name: save/update cache for future runs
+              uses: actions/cache/save@v4
+              if: github.ref == 'refs/heads/main'
+              with:
+                  path: |
+                      ~/.cargo/bin/
+                      ~/.cargo/registry/index/
+                      ~/.cargo/registry/cache/
+                      ~/.cargo/git/db/
+                      target/
+                  key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.toml') }}
+
+    minimum-rust-version:
+        name: Builds on the declared MSRV
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Install Rust (the declared MSRV)
+              uses: dtolnay/rust-toolchain@master
+              with:
+                  toolchain: 1.85.0
+
+            # rust-toolchain.toml pins the development toolchain, so it has to be
+            # overridden here or this job would silently test 1.90 instead.
+            - name: Build
+              run: cargo build --features actix,full
+              env:
+                  RUSTUP_TOOLCHAIN: 1.85.0

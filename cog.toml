@@ -1,0 +1,31 @@
+from_latest_tag = false
+ignore_merge_commits = false
+ignore_fixup_commits = true
+disable_changelog = false
+disable_bump_commit = false
+branch_whitelist = []
+skip_ci = "[skip ci]"
+skip_untracked = false
+
+# Keeps Cargo.toml's version in step with the tag, so the manifest never drifts
+# from the release.
+pre_bump_hooks = [
+    "cargo set-version {{version}}",
+]
+post_bump_hooks = []
+pre_package_bump_hooks = []
+post_package_bump_hooks = []
+
+tag_prefix = "v"
+
+[git_hooks]
+
+[commit_types]
+
+[changelog]
+path = "CHANGELOG.md"
+authors = []
+
+[bump_profiles]
+
+# Single crate: no [packages] section, so cog versions the repository as a whole.

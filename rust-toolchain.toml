@@ -1,0 +1,5 @@
+[toolchain]
+# The toolchain used for development and CI. The crate's own MSRV is declared as
+# `rust-version` in Cargo.toml and is checked separately in CI.
+channel = "1.90.0"
+components = ["rust-src", "rustfmt", "clippy", "rust-analyzer"]

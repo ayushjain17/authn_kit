@@ -1,0 +1,110 @@
+name: Create an authn_kit release
+
+# Releases are cut deliberately, not on every merge to main: cutting a version
+# is a judgement about what is ready to ship, and tying it to merges takes that
+# judgement away.
+#
+# The version is still only pushed when cocogitto actually bumped one, so
+# triggering with nothing releasable on main is a no-op rather than an empty tag.
+on: workflow_dispatch
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    tag-release:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            id-token: write
+        if: github.ref == 'refs/heads/main'
+        outputs:
+            version: ${{ steps.git_tag.outputs.version }}
+            is_new_version: ${{ steps.git_tag.outputs.is_new_version }}
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  ssh-key: ${{ secrets.AUTHN_KIT_DEPLOY_KEY }}
+
+            - name: Install Rust
+              uses: dtolnay/rust-toolchain@master
+              with:
+                  toolchain: 1.90.0
+                  components: rustfmt, clippy
+
+            - name: install cargo-edit to perform set-version
+              uses: baptiste0928/cargo-install@v2.2.0
+              with:
+                  crate: cargo-edit
+                  version: "0.13.6"
+
+            - name: install cocogitto
+              uses: baptiste0928/cargo-install@v2.2.0
+              with:
+                  crate: cocogitto
+                  version: "6.3.0"
+
+            - name: Get current version
+              id: current_version
+              shell: bash
+              run: |
+                  current_version=`cog -v get-version || echo "0.0.0"`
+                  echo "current_version=$current_version" >> $GITHUB_OUTPUT
+
+            - name: Semver release
+              shell: bash
+              run: |
+                  git config user.email "authn_kit_bot@juspay.in"
+                  git config user.name "authn_kit Bot"
+                  cog bump --auto --skip-ci
+
+            - name: Set latest tag
+              id: git_tag
+              shell: bash
+              run: |
+                  current_version=${{ steps.current_version.outputs.current_version }}
+                  version=`cog -v get-version`
+                  echo "version=$version" >> $GITHUB_OUTPUT
+
+                  if [ "$version" != "$current_version" ]; then
+                    echo "is_new_version=true" >> $GITHUB_OUTPUT
+                    echo "New version detected: $current_version -> $version"
+                  else
+                    echo "is_new_version=false" >> $GITHUB_OUTPUT
+                    echo "No version change detected: $version"
+                  fi
+
+            - name: Push code to main
+              shell: bash
+              if: steps.git_tag.outputs.is_new_version == 'true'
+              run: |
+                  git push origin main
+                  git push origin --tags
+
+    release:
+        needs: [tag-release]
+        permissions:
+            contents: write
+        runs-on: ubuntu-latest
+        if: needs.tag-release.outputs.is_new_version == 'true'
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  ref: main
+                  fetch-depth: 0
+                  ssh-key: ${{ secrets.AUTHN_KIT_DEPLOY_KEY }}
+
+            - name: Create GitHub Release
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: v${{ needs.tag-release.outputs.version }}
+                  draft: true
+
+    # Publishing to crates.io is deliberately not automated: the crate is
+    # consumed as a git dependency today, and pushing to a public registry is an
+    # irreversible act that should be an explicit decision. To enable it, add a
+    # CARGO_REGISTRY_TOKEN secret and a job running `cargo publish`.

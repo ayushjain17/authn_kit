@@ -1,0 +1,12 @@
+# Rust build output
+/target
+**/*.rs.bk
+
+# nix / direnv
+.direnv
+/result
+/result-*
+
+.pre-commit-config.yaml
+
+.DS_Store
